@@ -12,16 +12,23 @@ open class TVDiscoveryService: NSObject, @unchecked Sendable {
     private var isSearching = false
     private var initialSearchTime: Date?
     
-    private let serviceType: String
+    private let serviceTypes: [String]
+    private var currentServiceTypeIndex = 0
     
-    public init(serviceType: String) {
-        self.serviceType = serviceType
+    public init(serviceTypes: [String]) {
+        self.serviceTypes = serviceTypes
+        super.init()
+    }
+    
+    public convenience init(serviceType: String) {
+        self.init(serviceTypes: [serviceType])
     }
     
     public func start() {
         stop()
         isSearching = true
         discoveredServices.removeAll()
+        currentServiceTypeIndex = 0
         browser.delegate = self
         browser.stop()
         initialSearchTime = Date()
@@ -29,16 +36,34 @@ open class TVDiscoveryService: NSObject, @unchecked Sendable {
     }
     
     private func performSearch() {
-        guard isSearching else { return }
+        guard isSearching, currentServiceTypeIndex < serviceTypes.count else {
+            stop()
+            onScanFinished?()
+            return
+        }
         
-        browser.searchForServices(ofType: serviceType, inDomain: "local.")
+        let currentServiceType = serviceTypes[currentServiceTypeIndex]
+        browser.searchForServices(ofType: currentServiceType, inDomain: "local.")
         
         retryTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self, self.isSearching else { return }
-                self.browser.stop()
-                self.browser.searchForServices(ofType: self.serviceType, inDomain: "local.")
                 
+                // Переходим к следующему типу сервиса
+                self.currentServiceTypeIndex += 1
+                self.browser.stop()
+                
+                if self.currentServiceTypeIndex < self.serviceTypes.count {
+                    let nextServiceType = self.serviceTypes[self.currentServiceTypeIndex]
+                    self.browser.searchForServices(ofType: nextServiceType, inDomain: "local.")
+                } else {
+                    // Если все типы сервисов проверены, начинаем сначала
+                    self.currentServiceTypeIndex = 0
+                    let firstServiceType = self.serviceTypes[self.currentServiceTypeIndex]
+                    self.browser.searchForServices(ofType: firstServiceType, inDomain: "local.")
+                }
+                
+                // Проверяем общее время поиска
                 if let startTime = self.initialSearchTime, Date().timeIntervalSince(startTime) >= 10.0 {
                     self.stop()
                     self.onScanFinished?()
